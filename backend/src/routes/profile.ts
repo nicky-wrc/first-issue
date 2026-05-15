@@ -1,8 +1,8 @@
 import { Router } from "express";
 import type { AuthedRequest } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
-import { githubGraphql } from "../lib/github.js";
 import { prisma } from "../lib/prisma.js";
+import { syncLanguagesFromGitHub } from "../lib/profile-sync.js";
 
 const router = Router();
 
@@ -30,32 +30,6 @@ router.get("/", requireAuth, async (req, res) => {
   res.json(user);
 });
 
-type RepoLanguagesResponse = {
-  viewer: {
-    repositories: {
-      nodes: {
-        name: string;
-        languages: { edges: { size: number; node: { name: string } }[] };
-      }[];
-    };
-  };
-};
-
-const SYNC_REPOS_QUERY = `
-  query SyncRepos($login: String!) {
-    viewer: user(login: $login) {
-      repositories(first: 30, ownerAffiliations: OWNER, orderBy: { field: UPDATED_AT, direction: DESC }) {
-        nodes {
-          name
-          languages(first: 10, orderBy: { field: SIZE, direction: DESC }) {
-            edges { size node { name } }
-          }
-        }
-      }
-    }
-  }
-`;
-
 router.post("/sync", requireAuth, async (req, res) => {
   const authed = req as AuthedRequest;
   const user = await prisma.user.findUnique({ where: { id: authed.userId } });
@@ -65,39 +39,32 @@ router.post("/sync", requireAuth, async (req, res) => {
   }
 
   try {
-    const data = await githubGraphql<RepoLanguagesResponse>(
-      SYNC_REPOS_QUERY,
-      { login: user.username },
+    const skipCache = req.query.force === "true";
+    const synced = await syncLanguagesFromGitHub(
+      authed.userId,
       authed.githubAccessToken,
+      { skipCache },
     );
-
-    const languageTotals = new Map<string, number>();
-    for (const repo of data.viewer.repositories.nodes) {
-      for (const edge of repo.languages.edges) {
-        languageTotals.set(
-          edge.node.name,
-          (languageTotals.get(edge.node.name) ?? 0) + edge.size,
-        );
-      }
-    }
-
-    const languages = Array.from(languageTotals.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([name]) => name);
 
     const updated = await prisma.user.update({
       where: { id: user.id },
-      data: { languages },
+      data: {
+        languages: synced.languages,
+        skillLevel: synced.skillLevel,
+      },
       select: {
         id: true,
         username: true,
+        avatarUrl: true,
         languages: true,
         skillLevel: true,
       },
     });
 
-    res.json(updated);
+    res.json({
+      ...updated,
+      repoCount: synced.repoCount,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Sync failed";
     res.status(500).json({ error: message });

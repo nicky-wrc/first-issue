@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HomeRedirect } from "@/components/home-redirect";
 import { SignInButton } from "@/components/auth/sign-in-button";
 import { AppNav } from "@/components/layout/app-nav";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ const features = [
 export default function HomePage() {
   return (
     <div className="min-h-screen bg-background">
+      <HomeRedirect />
       <AppNav />
       <main className="mx-auto max-w-5xl px-4 py-16">
         <section className="mx-auto max-w-2xl space-y-6 text-center">

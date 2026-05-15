@@ -14,7 +14,14 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   session: { strategy: "jwt" },
+  pages: {
+    signIn: "/",
+  },
   callbacks: {
+    async redirect({ url, baseUrl }) {
+      if (url.startsWith(baseUrl)) return url;
+      return `${baseUrl}/feed`;
+    },
     async jwt({ token, account, profile }) {
       if (account && profile && "id" in profile) {
         const githubId = String(profile.id);
@@ -45,6 +52,8 @@ export const authOptions: NextAuthOptions = {
           token.userId = user.id;
           token.githubId = githubId;
           token.accessToken = account.access_token;
+        } else {
+          console.error("Auth upsert failed:", await res.text());
         }
       }
       return token;
@@ -57,8 +66,5 @@ export const authOptions: NextAuthOptions = {
       session.accessToken = token.accessToken as string | undefined;
       return session;
     },
-  },
-  pages: {
-    signIn: "/",
   },
 };

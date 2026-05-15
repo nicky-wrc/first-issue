@@ -4,6 +4,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { analyzeIssueMatch } from "../lib/claude.js";
 import { githubGraphql } from "../lib/github.js";
 import { prisma } from "../lib/prisma.js";
+import { cacheGet, cacheSet } from "../lib/redis.js";
 
 const router = Router();
 
@@ -63,10 +64,22 @@ router.get("/", requireAuth, async (req, res) => {
   ];
   if (lang) parts.push(`language:${lang}`);
 
+  const searchQuery = parts.join(" ");
+  const cacheKey = `issues:${searchQuery}:${first}`;
+
   try {
+    const cached = await cacheGet<{
+      total: number;
+      issues: unknown[];
+    }>(cacheKey);
+    if (cached) {
+      res.json({ ...cached, cached: true });
+      return;
+    }
+
     const data = await githubGraphql<SearchIssuesResponse>(
       SEARCH_ISSUES_QUERY,
-      { query: parts.join(" "), first, after: null },
+      { query: searchQuery, first, after: null },
       authed.githubAccessToken,
     );
 
@@ -82,7 +95,9 @@ router.get("/", requireAuth, async (req, res) => {
       commentCount: node.comments.totalCount,
     }));
 
-    res.json({ total: data.search.issueCount, issues });
+    const payload = { total: data.search.issueCount, issues };
+    await cacheSet(cacheKey, payload, 900);
+    res.json(payload);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Search failed";
     res.status(500).json({ error: message });
