@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+
+# next.js
+frontend/.next/
+frontend/out/
+
+# backend build
+backend/dist/
+
+# env
+.env
+.env*.local
+frontend/.env
+frontend/.env.local
+backend/.env
+
+# misc
+.DS_Store
+*.pem
+npm-debug.log*
+.yarn/
+
+# typescript
+*.tsbuildinfo
+frontend/next-env.d.ts
+
+# temp
+_migrate_temp/
