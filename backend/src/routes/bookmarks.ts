@@ -5,10 +5,48 @@ import { prisma } from "../lib/prisma.js";
 
 const router = Router();
 
+router.get("/urls", requireAuth, async (req, res) => {
+  const { userId } = req as AuthedRequest;
+  const rows = await prisma.bookmark.findMany({
+    where: { userId },
+    select: { issueUrl: true },
+  });
+  res.json({ urls: rows.map((r) => r.issueUrl) });
+});
+
+router.get("/stats", requireAuth, async (req, res) => {
+  const { userId } = req as AuthedRequest;
+  const groups = await prisma.bookmark.groupBy({
+    by: ["status"],
+    where: { userId },
+    _count: { _all: true },
+  });
+
+  const counts = {
+    interested: 0,
+    applying: 0,
+    submitted: 0,
+    total: 0,
+  };
+  for (const row of groups) {
+    counts[row.status] = row._count._all;
+    counts.total += row._count._all;
+  }
+  res.json(counts);
+});
+
 router.get("/", requireAuth, async (req, res) => {
   const { userId } = req as AuthedRequest;
+  const status = req.query.status as string | undefined;
+  const valid = new Set(["interested", "applying", "submitted"]);
+
   const bookmarks = await prisma.bookmark.findMany({
-    where: { userId },
+    where: {
+      userId,
+      ...(status && valid.has(status)
+        ? { status: status as "interested" | "applying" | "submitted" }
+        : {}),
+    },
     orderBy: { updatedAt: "desc" },
   });
   res.json(bookmarks);

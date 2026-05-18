@@ -41,3 +41,32 @@ export async function githubGraphql<T>(
 
   return json.data;
 }
+
+export async function fetchIssueBody(
+  issueUrl: string,
+  accessToken?: string | null,
+): Promise<string> {
+  const match = issueUrl.match(
+    /github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)/i,
+  );
+  if (!match) return "";
+
+  const [, owner, repo, number] = match;
+  const token = getGitHubToken(accessToken);
+  if (!token) return "";
+
+  const response = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/issues/${number}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+      },
+    },
+  );
+
+  if (!response.ok) return "";
+
+  const data = (await response.json()) as { body?: string | null };
+  return data.body?.trim() ?? "";
+}

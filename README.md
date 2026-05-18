@@ -1,81 +1,78 @@
 # First Issue (Open Source Finder)
 
-Monorepo แยก **backend** (Express + Prisma) และ **frontend** (Next.js) ชัดเจน
+Monorepo แยก **backend** (Express + Prisma) และ **frontend** (Next.js)
+
+## Features (by phase)
+
+| Phase | สิ่งที่ทำ |
+|-------|----------|
+| 0 | Monorepo, NextAuth GitHub, Prisma, landing |
+| 1 | Skill profile sync จาก repos, skill level |
+| 2 | Issue feed + filters (language, label, stars, age) + pagination |
+| 3 | AI match (Claude) — score, summary, difficulty |
+| 4 | Bookmarks + status pipeline + filter + remove |
+| 5 | Weekly digest email (Resend) + preview + cron |
+| 6 | Personalized feed, bookmark sync, nav badge, digest open tracking |
 
 ## โครงสร้าง
 
 ```
 first-issue/
-├── backend/                 # Express API (:4000)
-│   ├── src/
-│   │   ├── index.ts
-│   │   ├── routes/
-│   │   ├── lib/
-│   │   └── middleware/
-│   ├── prisma/
-│   ├── package.json
-│   └── tsconfig.json
-├── frontend/                # Next.js (:3000)
-│   ├── src/
-│   │   ├── app/             # routing + auth + API proxy
-│   │   ├── components/
-│   │   └── lib/
-│   ├── package.json
-│   ├── next.config.mjs
-│   └── tailwind.config.ts
-├── package.json             # workspaces root
-└── README.md
+├── backend/          # Express :4000
+├── frontend/         # Next.js :3000
+└── package.json
 ```
 
 ## เริ่มต้น
 
-### 1. ติดตั้ง dependencies (root)
-
 ```bash
 npm install
-```
-
-### 2. ตั้งค่า environment
-
-```bash
 copy backend\.env.example backend\.env
 copy frontend\.env.example frontend\.env.local
-```
-
-- **backend/.env** — `DATABASE_URL`, `GITHUB_TOKEN`, `ANTHROPIC_API_KEY`, …
-- **frontend/.env.local** — `NEXTAUTH_*`, `GITHUB_CLIENT_*`, `BACKEND_URL`
-- **`INTERNAL_API_KEY`** ต้องตรงกันทั้งสองฝั่ง (ใช้ตอน login สร้าง user ใน DB)
-
-### 3. Database (pgAdmin)
-
-สร้าง DB `first_issue` แล้วรัน:
-
-```bash
 npm run db:generate
 npm run db:migrate
-```
-
-### 4. รันทั้งสอง service
-
-```bash
 npm run dev
 ```
 
 - Frontend: http://localhost:3000  
 - Backend: http://localhost:4000/health  
 
-## การทำงานของ API
+`INTERNAL_API_KEY` ต้องตรงกันทั้ง `backend/.env` และ `frontend/.env.local`
 
-- Browser เรียก `/api/*` ที่ Next.js (port 3000)
-- `frontend/src/app/api/[[...path]]` proxy ไป Express พร้อม session headers
-- GitHub OAuth อยู่ที่ `frontend/src/app/api/auth/[...nextauth]` เท่านั้น
+## Environment (optional services)
+
+| ตัวแปร | ใช้เมื่อ |
+|--------|----------|
+| `GITHUB_TOKEN` | Fallback สำหรับ GitHub API |
+| `ANTHROPIC_API_KEY` | ปุ่ม AI match |
+| `UPSTASH_REDIS_*` | Cache profile/issues (ไม่บังคับ) |
+| `RESEND_API_KEY` | Weekly digest + test email |
+| `CRON_SECRET` | ป้องกัน endpoint ส่ง digest รายสัปดาห์ |
+
+## Weekly digest (cron)
+
+```powershell
+# จาก root — ตั้ง CRON_SECRET ก่อน
+$env:CRON_SECRET="your-secret"
+$env:BACKEND_URL="http://localhost:4000"
+npm run digest:weekly
+```
+
+หรือ:
+
+```powershell
+curl -X POST http://localhost:4000/api/digest/cron/weekly -H "X-Cron-Secret: YOUR_CRON_SECRET"
+```
 
 ## Scripts
 
 | คำสั่ง | ความหมาย |
 |--------|----------|
-| `npm run dev` | รัน backend + frontend พร้อมกัน |
-| `npm run dev:backend` | Express เท่านั้น |
-| `npm run dev:frontend` | Next.js เท่านั้น |
+| `npm run dev` | backend + frontend |
 | `npm run build` | build ทั้ง monorepo |
 | `npm run db:migrate` | Prisma migrate |
+| `npm run digest:weekly` | ส่ง digest ให้ users ที่มี email |
+
+## API flow
+
+Browser → `/api/*` (Next.js) → proxy → Express พร้อม `X-User-Id` + `X-Github-Token`

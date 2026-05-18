@@ -4,6 +4,7 @@ import authRouter from "./routes/auth.js";
 import bookmarksRouter from "./routes/bookmarks.js";
 import issuesRouter from "./routes/issues.js";
 import profileRouter from "./routes/profile.js";
+import digestRouter from "./routes/digest.js";
 
 export function createApp() {
   const app = express();
@@ -24,6 +25,7 @@ export function createApp() {
   app.use("/api/profile", profileRouter);
   app.use("/api/issues", issuesRouter);
   app.use("/api/bookmarks", bookmarksRouter);
+  app.use("/api/digest", digestRouter);
 
   return app;
 }

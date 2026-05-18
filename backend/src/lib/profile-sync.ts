@@ -2,11 +2,20 @@ import { cacheGet, cacheSet } from "./redis.js";
 import { githubGraphql } from "./github.js";
 import { inferSkillLevel } from "./skills.js";
 
+export type RepoSummary = {
+  name: string;
+  url: string;
+  stars: number;
+  languages: string[];
+};
+
 type RepoLanguagesResponse = {
   viewer: {
     repositories: {
       nodes: {
         name: string;
+        url: string;
+        stargazerCount: number;
         languages: { edges: { size: number; node: { name: string } }[] };
       }[];
     };
@@ -19,7 +28,9 @@ const SYNC_REPOS_QUERY = `
       repositories(first: 30, ownerAffiliations: OWNER, orderBy: { field: UPDATED_AT, direction: DESC }) {
         nodes {
           name
-          languages(first: 10, orderBy: { field: SIZE, direction: DESC }) {
+          url
+          stargazerCount
+          languages(first: 5, orderBy: { field: SIZE, direction: DESC }) {
             edges { size node { name } }
           }
         }
@@ -32,6 +43,7 @@ export type SyncResult = {
   languages: string[];
   skillLevel: "beginner" | "intermediate" | "advanced";
   repoCount: number;
+  repos: RepoSummary[];
 };
 
 export async function syncLanguagesFromGitHub(
@@ -52,17 +64,24 @@ export async function syncLanguagesFromGitHub(
     accessToken,
   );
 
-  const repos = data.viewer.repositories.nodes;
+  const repoNodes = data.viewer.repositories.nodes;
   const languageTotals = new Map<string, number>();
 
-  for (const repo of repos) {
+  const repos: RepoSummary[] = repoNodes.map((repo) => {
+    const languages = repo.languages.edges.map((e) => e.node.name);
     for (const edge of repo.languages.edges) {
       languageTotals.set(
         edge.node.name,
         (languageTotals.get(edge.node.name) ?? 0) + edge.size,
       );
     }
-  }
+    return {
+      name: repo.name,
+      url: repo.url,
+      stars: repo.stargazerCount,
+      languages,
+    };
+  });
 
   const languages = Array.from(languageTotals.entries())
     .sort((a, b) => b[1] - a[1])
@@ -73,6 +92,7 @@ export async function syncLanguagesFromGitHub(
     languages,
     skillLevel: inferSkillLevel(languages.length, repos.length),
     repoCount: repos.length,
+    repos: repos.slice(0, 12),
   };
 
   await cacheSet(cacheKey, result, 3600);

@@ -1,8 +1,9 @@
 import { Router } from "express";
 import type { AuthedRequest } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
-import { analyzeIssueMatch } from "../lib/claude.js";
-import { githubGraphql } from "../lib/github.js";
+import { analyzeIssueMatch, isAiConfigured } from "../lib/claude.js";
+import { buildIssueSearchQuery } from "../lib/issue-search.js";
+import { fetchIssueBody, githubGraphql } from "../lib/github.js";
 import { prisma } from "../lib/prisma.js";
 import { cacheGet, cacheSet } from "../lib/redis.js";
 
@@ -11,6 +12,7 @@ const router = Router();
 type SearchIssuesResponse = {
   search: {
     issueCount: number;
+    pageInfo: { endCursor: string | null; hasNextPage: boolean };
     nodes: {
       id: string;
       title: string;
@@ -31,6 +33,7 @@ const SEARCH_ISSUES_QUERY = `
   query SearchIssues($query: String!, $first: Int!, $after: String) {
     search(type: ISSUE, query: $query, first: $first, after: $after) {
       issueCount
+      pageInfo { endCursor hasNextPage }
       nodes {
         ... on Issue {
           id
@@ -50,58 +53,70 @@ const SEARCH_ISSUES_QUERY = `
   }
 `;
 
+function mapIssue(node: SearchIssuesResponse["search"]["nodes"][0]) {
+  return {
+    id: node.id,
+    title: node.title,
+    url: node.url,
+    repoName: node.repository.nameWithOwner,
+    language: node.repository.primaryLanguage?.name ?? null,
+    stars: node.repository.stargazerCount,
+    labels: node.labels.nodes.map((l) => l.name),
+    createdAt: node.createdAt,
+    commentCount: node.comments.totalCount,
+  };
+}
+
 router.get("/", requireAuth, async (req, res) => {
   const authed = req as AuthedRequest;
   const lang = req.query.lang as string | undefined;
   const label = (req.query.label as string | undefined) ?? "good-first-issue";
   const first = Math.min(Number(req.query.first ?? 20), 30);
+  const after = (req.query.after as string | undefined) || null;
+  const minStars = Number(req.query.minStars ?? 0) || undefined;
+  const ageDays = Number(req.query.ageDays ?? 0) || undefined;
 
-  const parts = [
-    "is:issue",
-    "is:open",
-    "no:assignee",
-    `label:"${label.replace(/-/g, " ")}"`,
-  ];
-  if (lang) parts.push(`language:${lang}`);
-
-  const searchQuery = parts.join(" ");
-  const cacheKey = `issues:${searchQuery}:${first}`;
+  const searchQuery = buildIssueSearchQuery({ label, lang, minStars, ageDays });
+  const cacheKey = `issues:${searchQuery}:${first}:${after ?? "start"}`;
 
   try {
-    const cached = await cacheGet<{
-      total: number;
-      issues: unknown[];
-    }>(cacheKey);
-    if (cached) {
-      res.json({ ...cached, cached: true });
-      return;
+    if (!after) {
+      const cached = await cacheGet<{
+        total: number;
+        issues: ReturnType<typeof mapIssue>[];
+        nextCursor: string | null;
+        hasNextPage: boolean;
+      }>(cacheKey);
+      if (cached) {
+        res.json({ ...cached, cached: true });
+        return;
+      }
     }
 
     const data = await githubGraphql<SearchIssuesResponse>(
       SEARCH_ISSUES_QUERY,
-      { query: searchQuery, first, after: null },
+      { query: searchQuery, first, after },
       authed.githubAccessToken,
     );
 
-    const issues = data.search.nodes.map((node) => ({
-      id: node.id,
-      title: node.title,
-      url: node.url,
-      repoName: node.repository.nameWithOwner,
-      language: node.repository.primaryLanguage?.name ?? null,
-      stars: node.repository.stargazerCount,
-      labels: node.labels.nodes.map((l) => l.name),
-      createdAt: node.createdAt,
-      commentCount: node.comments.totalCount,
-    }));
+    const issues = data.search.nodes.map(mapIssue);
+    const payload = {
+      total: data.search.issueCount,
+      issues,
+      nextCursor: data.search.pageInfo.endCursor,
+      hasNextPage: data.search.pageInfo.hasNextPage,
+    };
 
-    const payload = { total: data.search.issueCount, issues };
-    await cacheSet(cacheKey, payload, 900);
+    if (!after) await cacheSet(cacheKey, payload, 900);
     res.json(payload);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Search failed";
     res.status(500).json({ error: message });
   }
+});
+
+router.get("/ai-status", requireAuth, (_req, res) => {
+  res.json({ configured: isAiConfigured() });
 });
 
 router.post("/analyze", requireAuth, async (req, res) => {
@@ -112,6 +127,15 @@ router.post("/analyze", requireAuth, async (req, res) => {
     issueBody?: string;
     labels?: string[];
   };
+
+  if (!isAiConfigured()) {
+    res.status(503).json({
+      error:
+        "AI matching is not available. Add ANTHROPIC_API_KEY to backend/.env and restart the server.",
+      code: "AI_NOT_CONFIGURED",
+    });
+    return;
+  }
 
   if (!body.issueUrl || !body.issueTitle) {
     res.status(400).json({ error: "issueUrl and issueTitle are required" });
@@ -139,10 +163,15 @@ router.post("/analyze", requireAuth, async (req, res) => {
   }
 
   try {
+    let issueBody = body.issueBody?.trim() ?? "";
+    if (!issueBody) {
+      issueBody = await fetchIssueBody(body.issueUrl, authed.githubAccessToken);
+    }
+
     const result = await analyzeIssueMatch({
       developerSkills: user.languages,
       issueTitle: body.issueTitle,
-      issueBody: body.issueBody ?? "",
+      issueBody,
       labels: body.labels ?? [],
     });
 
@@ -167,7 +196,17 @@ router.post("/analyze", requireAuth, async (req, res) => {
     res.json({ ...result, cached: false });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Analysis failed";
-    res.status(500).json({ error: message });
+    const code =
+      error instanceof Error && "code" in error
+        ? String((error as Error & { code: string }).code)
+        : undefined;
+    const status =
+      code === "AI_NOT_CONFIGURED" || code === "AI_INSUFFICIENT_CREDITS"
+        ? 503
+        : code === "AI_INVALID_KEY"
+          ? 401
+          : 500;
+    res.status(status).json({ error: message, ...(code ? { code } : {}) });
   }
 });
 

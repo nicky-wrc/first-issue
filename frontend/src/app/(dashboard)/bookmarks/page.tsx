@@ -2,44 +2,89 @@
 
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { useEffect, useState } from "react";
-import { MatchScore } from "@/components/match-score";
+import { useCallback, useEffect, useState } from "react";
+import {
+  BookmarkCard,
+  type BookmarkItem,
+} from "@/components/bookmark-card";
 import { Button } from "@/components/ui/button";
 
-type Bookmark = {
-  id: string;
-  issueTitle: string;
-  issueUrl: string;
-  repoName: string;
-  status: string;
-  matchScore: number | null;
+type StatusFilter = "" | "interested" | "applying" | "submitted";
+
+type BookmarkStats = {
+  interested: number;
+  applying: number;
+  submitted: number;
+  total: number;
 };
+
+const FILTERS: { value: StatusFilter; label: string }[] = [
+  { value: "", label: "All" },
+  { value: "interested", label: "Interested" },
+  { value: "applying", label: "Applying" },
+  { value: "submitted", label: "Submitted" },
+];
 
 export default function BookmarksPage() {
   const { status } = useSession();
-  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
+  const [filter, setFilter] = useState<StatusFilter>("");
+  const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
+  const [stats, setStats] = useState<BookmarkStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const loadBookmarks = useCallback(async (statusFilter: StatusFilter) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = statusFilter ? `?status=${statusFilter}` : "";
+      const [listRes, statsRes] = await Promise.all([
+        fetch(`/api/bookmarks${params}`),
+        fetch("/api/bookmarks/stats"),
+      ]);
+      const list = await listRes.json();
+      const counts = await statsRes.json();
+      if (!listRes.ok) throw new Error(list.error ?? "Failed to load");
+      setBookmarks(Array.isArray(list) ? list : []);
+      if (statsRes.ok) setStats(counts);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (status !== "authenticated") {
       setLoading(false);
       return;
     }
-    fetch("/api/bookmarks")
-      .then((res) => res.json())
-      .then((data) => setBookmarks(Array.isArray(data) ? data : []))
-      .finally(() => setLoading(false));
-  }, [status]);
+    void loadBookmarks(filter);
+  }, [status, filter, loadBookmarks]);
 
   async function updateStatus(id: string, nextStatus: string) {
-    await fetch(`/api/bookmarks/${id}/status`, {
+    const res = await fetch(`/api/bookmarks/${id}/status`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: nextStatus }),
     });
-    setBookmarks((prev) =>
-      prev.map((b) => (b.id === id ? { ...b, status: nextStatus } : b)),
-    );
+    if (!res.ok) return;
+    void loadBookmarks(filter);
+  }
+
+  async function deleteBookmark(id: string) {
+    if (!confirm("Remove this bookmark?")) return;
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/bookmarks/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to remove");
+      void loadBookmarks(filter);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to remove");
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   if (status === "unauthenticated") {
@@ -58,56 +103,59 @@ export default function BookmarksPage() {
       <div>
         <h1 className="text-2xl font-semibold">Bookmarks</h1>
         <p className="text-sm text-muted-foreground">
-          Track issues you want to work on.
+          Track issues from interested → applying → submitted.
         </p>
+        {stats && stats.total > 0 && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            {stats.interested} interested · {stats.applying} applying ·{" "}
+            {stats.submitted} submitted
+          </p>
+        )}
       </div>
 
-      {loading && <p className="text-sm text-muted-foreground">Loading...</p>}
+      <div className="flex flex-wrap gap-2">
+        {FILTERS.map((item) => (
+          <Button
+            key={item.value || "all"}
+            size="sm"
+            variant={filter === item.value ? "default" : "outline"}
+            onClick={() => setFilter(item.value)}
+          >
+            {item.label}
+          </Button>
+        ))}
+      </div>
+
+      {error && (
+        <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {error}
+        </p>
+      )}
+
+      {loading && (
+        <p className="text-sm text-muted-foreground">Loading bookmarks...</p>
+      )}
 
       <div className="grid gap-4">
         {bookmarks.map((bookmark) => (
-          <article key={bookmark.id} className="rounded-xl border bg-card p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="mb-1 flex items-center gap-2">
-                  {bookmark.matchScore != null && (
-                    <MatchScore score={bookmark.matchScore} />
-                  )}
-                  <span className="text-xs capitalize text-muted-foreground">
-                    {bookmark.status}
-                  </span>
-                </div>
-                <h3 className="font-medium">{bookmark.issueTitle}</h3>
-                <p className="text-sm text-muted-foreground">
-                  {bookmark.repoName}
-                </p>
-                <a
-                  href={bookmark.issueUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-1 inline-block text-sm underline"
-                >
-                  Open on GitHub
-                </a>
-              </div>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {(["interested", "applying", "submitted"] as const).map((s) => (
-                <Button
-                  key={s}
-                  size="sm"
-                  variant={bookmark.status === s ? "default" : "outline"}
-                  onClick={() => updateStatus(bookmark.id, s)}
-                >
-                  {s}
-                </Button>
-              ))}
-            </div>
-          </article>
+          <BookmarkCard
+            key={bookmark.id}
+            bookmark={bookmark}
+            onStatusChange={updateStatus}
+            onDelete={deleteBookmark}
+            deleting={deletingId === bookmark.id}
+          />
         ))}
         {!loading && bookmarks.length === 0 && (
           <p className="text-sm text-muted-foreground">
-            No bookmarks yet. Save issues from the feed.
+            {filter
+              ? `No bookmarks in "${filter}".`
+              : "No bookmarks yet. Save issues from the feed."}{" "}
+            {!filter && (
+              <Link href="/feed" className="underline">
+                Go to feed
+              </Link>
+            )}
           </p>
         )}
       </div>

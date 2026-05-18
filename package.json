@@ -13,7 +13,8 @@
     "build": "npm run build -w backend && npm run build -w frontend",
     "db:generate": "npm run db:generate -w backend",
     "db:migrate": "npm run db:migrate -w backend",
-    "db:studio": "npm run db:studio -w backend"
+    "db:studio": "npm run db:studio -w backend",
+    "digest:weekly": "node backend/scripts/send-weekly-digest.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

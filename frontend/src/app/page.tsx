@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 
 const features = [
   "Login with GitHub and build a skill profile from your repos",
-  "Filter good first issues by language and label",
+  "Personalized feed filtered by your top languages",
   "AI match score with Claude — what fits you and why",
   "Bookmark issues and track interested → applying → submitted",
+  "Weekly email digest with good-first issues for your stack",
 ];
 
 export default function HomePage() {
@@ -36,7 +37,7 @@ export default function HomePage() {
           </div>
         </section>
 
-        <section className="mt-20 grid gap-4 sm:grid-cols-2">
+        <section className="mt-20 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {features.map((text) => (
             <div
               key={text}

@@ -3,6 +3,9 @@
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { DigestPanel } from "@/components/digest-panel";
+import { ProfileSummary } from "@/components/profile-summary";
+import { RepoList, type RepoItem } from "@/components/repo-list";
 import { SkillBadge } from "@/components/skill-badge";
 import { Button } from "@/components/ui/button";
 
@@ -11,6 +14,8 @@ type Profile = {
   avatarUrl: string | null;
   languages: string[];
   skillLevel: string;
+  repos?: RepoItem[];
+  repoCount?: number | null;
 };
 
 export default function ProfilePage() {
@@ -19,7 +24,6 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [repoCount, setRepoCount] = useState<number | null>(null);
 
   const syncProfile = useCallback(async (force = false) => {
     setSyncing(true);
@@ -29,21 +33,14 @@ export default function ProfilePage() {
       const res = await fetch(url, { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Sync failed");
-      setProfile((prev) =>
-        prev
-          ? {
-              ...prev,
-              languages: data.languages,
-              skillLevel: data.skillLevel,
-            }
-          : {
-              username: data.username,
-              avatarUrl: data.avatarUrl ?? null,
-              languages: data.languages,
-              skillLevel: data.skillLevel,
-            },
-      );
-      if (typeof data.repoCount === "number") setRepoCount(data.repoCount);
+      setProfile((prev) => ({
+        username: data.username ?? prev?.username ?? "",
+        avatarUrl: data.avatarUrl ?? prev?.avatarUrl ?? null,
+        languages: data.languages ?? [],
+        skillLevel: data.skillLevel ?? "beginner",
+        repos: data.repos ?? [],
+        repoCount: data.repoCount ?? null,
+      }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sync failed");
     } finally {
@@ -90,7 +87,7 @@ export default function ProfilePage() {
         <div>
           <h1 className="text-2xl font-semibold">Skill profile</h1>
           <p className="text-sm text-muted-foreground">
-            Languages inferred from your GitHub repositories.
+            Languages and repos synced from your GitHub account.
           </p>
         </div>
         <Button onClick={() => syncProfile(true)} disabled={syncing}>
@@ -108,8 +105,10 @@ export default function ProfilePage() {
         <p className="text-sm text-muted-foreground">Loading profile...</p>
       )}
 
+      {status === "authenticated" && !loading && <ProfileSummary />}
+
       {profile && !loading && (
-        <section className="rounded-xl border bg-card p-6 space-y-4">
+        <section className="rounded-xl border bg-card p-6 space-y-6">
           <div className="flex items-center gap-3">
             {profile.avatarUrl && (
               // eslint-disable-next-line @next/next/no-img-element
@@ -123,10 +122,12 @@ export default function ProfilePage() {
               <p className="font-medium">@{profile.username}</p>
               <p className="text-sm text-muted-foreground capitalize">
                 Level: {profile.skillLevel}
-                {repoCount != null && ` · ${repoCount} repos analyzed`}
+                {profile.repoCount != null &&
+                  ` · ${profile.repoCount} repos analyzed`}
               </p>
             </div>
           </div>
+
           <div>
             <p className="mb-2 text-sm text-muted-foreground">Top languages</p>
             <div className="flex flex-wrap gap-2">
@@ -145,7 +146,15 @@ export default function ProfilePage() {
               )}
             </div>
           </div>
+
+          {profile.repos && profile.repos.length > 0 && (
+            <RepoList repos={profile.repos} />
+          )}
         </section>
+      )}
+
+      {status === "authenticated" && !loading && (
+        <DigestPanel />
       )}
     </div>
   );
